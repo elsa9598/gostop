@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>엘사네 수동 전원 고스톱 (Final Visibility Patch)</title>
+    <style>
+        /* [1. 기본 설정 및 레이아웃] */
+        body { margin: 0; padding: 0; background-color: #111; height: 100vh; width: 100vw; display: flex; justify-content: center; align-items: center; font-family: 'Malgun Gothic', sans-serif; overflow: hidden; user-select: none; touch-action: none; }
+        #game-container { width: 1500px; height: 720px; display: flex; background-color: #004d00; transform-origin: center center; position: relative; overflow: hidden; }
+        
+        .frame { height: 100%; position: relative; box-sizing: border-box; padding: 10px; display: flex; flex-direction: column; flex-shrink: 0; }
+        #frame-1 { width: 400px; background: #5d4037; border-right: 5px solid #3e2723; z-index: 2; }
+        #frame-2 { flex: 1; background-color: #005c00; position: relative; z-index: 1; }
+        #frame-3 { width: 400px; background: #5d4037; border-left: 5px solid #3e2723; z-index: 2; }
+
+        /* [2. 점수판] */
+        .glass-ui { 
+            position: absolute; min-width: 60px; height: 30px; padding: 0 8px;
+            background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; 
+            display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 5px;
+            color: white; font-size: 12px; font-weight: bold; z-index: 8000; transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+            cursor: pointer; white-space: nowrap; overflow: hidden;
+        }
+        #opp-ui { top: 10px; left: 10px; transform-origin: top left; }
+        #my-ui { top: 10px; right: 10px; transform-origin: top right; }
+        .glass-ui.expanded { transform: scale(3); background: rgba(0,0,0,0.85); z-index: 9999; min-width: 80px; border-color: yellow; box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
+        .score-txt { color: #ffeb3b; margin-left: 3px; }
+        .go-txt { color: #ff3333; font-size: 10px; margin-left: 3px; }
+
+        /* [3. 카드 디자인] */
+        .card { width: 70px; height: 112px; background-size: 100% 100%; border-radius: 6px; border: 2.5px solid #fff; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); position: absolute; transition: all 0.3s ease; background-color: #eee; }
+        .hand-area { width: 100%; height: 260px; display: flex; flex-direction: column; gap: 10px; padding-top: 20px; align-items: center; }
+        .hand-row { display: flex; justify-content: center; height: 100px; width: 100%; position: relative; }
+        .elsa-hand .card.selected { transform: translateY(40px) scale(1.6) !important; z-index: 5000 !important; border-color: yellow; box-shadow: 0 0 30px yellow; }
+
+        .bomb-candidate { border-color: #ffea00 !important; box-shadow: 0 0 15px #ffea00, inset 0 0 10px #ffea00 !important; animation: glow-pulse 1s infinite alternate; }
+        @keyframes glow-pulse { from { box-shadow: 0 0 10px #ffea00; } to { box-shadow: 0 0 25px #ffea00; transform: scale(1.05); } }
+        
+        .field-three-card-glow { border-color: #ffea00 !important; box-shadow: 0 0 20px #ffea00 !important; animation: field-pulse 1.5s infinite alternate; }
+        @keyframes field-pulse { from { box-shadow: 0 0 10px #ffea00; } to { box-shadow: 0 0 25px #ffea00; } }
+
+        .shake-anim { animation: shake-card 0.5s ease-in-out; }
+        @keyframes shake-card { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-10px) rotate(-5deg); } 75% { transform: translateX(10px) rotate(5deg); } }
+
+        .selectable-target { border: 4px solid #ff3333 !important; box-shadow: 0 0 30px #ff0000 !important; z-index: 6000 !important; animation: choice-pulse 0.8s infinite; cursor: pointer; }
+        @keyframes choice-pulse { from { transform: scale(1); } to { transform: scale(1.08); } }
+
+        /* [4. 먹은 패] */
+        .captured-zone { width: 100%; position: absolute; bottom: 10px; left: 0; padding: 10px 5px; display: flex; flex-direction: column; gap: 5px; }
+        .captured-row { display: flex; height: 105px; margin-bottom: 5px; position: relative; padding-left: 5px; }
+        .captured-card { width: 64px; height: 102px; background-size: 100% 100%; border-radius: 4px; border: 1px solid #999; background-color: #eee; margin-left: -32px; box-shadow: -2px 0 4px rgba(0,0,0,0.3); transition: transform 0.2s; }
+        .captured-card.start-group { margin-left: 0 !important; }
+        .captured-card:hover { transform: translateY(-10px); z-index: 10; }
+
+        /* [5. 기타 UI 요소] */
+        #dummy-stack { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 75px; height: 120px; z-index: 2000; cursor: pointer; display: none; }
+        .dummy-glow { animation: dummy-pulse 1s infinite alternate; }
+        @keyframes dummy-pulse { from { box-shadow: 0 0 15px yellow; } to { box-shadow: 0 0 45px #ffea00; transform: translate(-50%, -50%) scale(1.1); } }
+        
+        #effect-txt { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 100px; font-weight: 900; color: yellow; text-shadow: 5px 5px 0 #ff0000; opacity: 0; pointer-events: none; z-index: 8500; text-align: center; width: 100%; transition: 0.3s; white-space: nowrap; }
+        #preview-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0); width: 100px; height: 160px; z-index: 4000; border: 4px solid red; border-radius: 10px; background-size: 100% 100%; transition: 0.4s; }
+        .stolen-pi-anim { position: absolute; z-index: 9000; transition: all 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55); transform: scale(2); border: 3px solid gold; box-shadow: 0 0 40px gold; }
+
+        /* [6. 오버레이 및 선택창] */
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 9000; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; }
+        .char-card-wrap { display: flex; flex-direction: column; align-items: center; cursor: pointer; transition: all 0.3s; border-radius: 15px; padding: 15px; border: 3px solid transparent; }
+        .char-card-wrap:hover { transform: scale(1.1); background: rgba(255, 255, 255, 0.1); border-color: yellow; }
+        .char-card-wrap img { border-radius: 10px; box-shadow: 5px 5px 15px rgba(0,0,0,0.5); }
+        .char-card-wrap p { font-size: 24px; font-weight: bold; margin-top: 10px; }
+
+        /* [가위바위보 버튼] */
+        .rps-btn { 
+            font-size: 100px; width: 200px; height: 200px; 
+            cursor: pointer; background: rgba(255,255,255,0.1); border: 8px solid white; border-radius: 50%; 
+            display: flex; align-items: center; justify-content: center; transition: 0.2s; box-shadow: 0 0 20px rgba(255,255,255,0.2);
+        }
+        .rps-btn:active { transform: scale(0.9); background: rgba(255,255,255,0.3); }
+
+        #bomb-choice-overlay { background: rgba(0,0,0,0.7); display: none; }
+        .bomb-btn { padding: 20px 40px; font-size: 25px; font-weight: bold; color: white; background: #004d00; border: 3px solid gold; border-radius: 15px; cursor: pointer; margin: 0 15px; transition: 0.2s; }
+        .bomb-btn:hover { background: #006600; transform: scale(1.1); box-shadow: 0 0 20px gold; }
+
+        #gostop-overlay { background: rgba(0,0,0,0.85); display: none; z-index: 9500; }
+        .gostop-btn { width: 180px; height: 180px; border-radius: 50%; font-size: 40px; font-weight: 900; cursor: pointer; border: 5px solid white; transition: 0.2s; box-shadow: 0 0 50px rgba(255,255,255,0.5); }
+        .btn-go { background: linear-gradient(45deg, #ff9800, #ff5722); color: white; }
+        .btn-stop { background: linear-gradient(45deg, #2196f3, #3f51b5); color: white; }
+        .btn-go:hover, .btn-stop:hover { transform: scale(1.1); }
+
+        /* [7. 전체화면 버튼 (가시성 대폭 개선)] */
+        #fullscreen-btn { 
+            position: absolute; 
+            bottom: 30px; 
+            right: 30px; 
+            width: 80px; 
+            height: 80px; 
+            
+            /* 눈에 띄는 디자인 */
+            background: rgba(0,0,0,0.6); 
+            border: 4px solid #ffeb3b; /* 밝은 노란색 테두리 */
+            border-radius: 50%; /* 원형 */
+            color: #ffeb3b; 
+            font-size: 45px; 
+            
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            cursor: pointer; 
+            z-index: 10000; 
+            
+            /* 그림자 및 애니메이션 */
+            box-shadow: 0 0 20px rgba(255, 235, 59, 0.5);
+            animation: btn-pulse 2s infinite; 
+        }
+        
+        #fullscreen-btn:active { transform: scale(0.9); background: rgba(0,0,0,0.8); }
+
+        /* 두근거리는 효과 */
+        @keyframes btn-pulse {
+            0% { box-shadow: 0 0 10px rgba(255, 235, 59, 0.3); transform: scale(1); }
+            50% { box-shadow: 0 0 25px rgba(255, 235, 59, 0.8); transform: scale(1.05); }
+            100% { box-shadow: 0 0 10px rgba(255, 235, 59, 0.3); transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div id="game-container">
+        <audio id="snd-chak" src="chak.mp3"></audio>
+        <audio id="snd-tak" src="tak.mp3"></audio>
+        <audio id="snd-fail" src="fail.mp3"></audio>
+        <audio id="snd-get" src="get.mp3"></audio>
+        <audio id="snd-shuffle" src="shuffle.mp3"></audio>
+        <audio id="snd-jjok" src="jjok.mp3"></audio>
+        <audio id="snd-bomb" src="bomb.mp3"></audio>
+        <audio id="snd-wind" src="wind.mp3"></audio>
+        <audio id="snd-go" src="go.mp3"></audio>
+        <audio id="snd-stop" src="stop.mp3"></audio>
+
+        <div id="fullscreen-btn" onclick="toggleFullScreen()" title="전체화면">⛶</div>
+
+        <div id="frame-1" class="frame">
+            <div id="opp-ui" class="glass-ui" onclick="toggleScore(this)">
+                <span id="opp-name-ui">상대방</span>
+                <span class="score-txt"><span id="opp-score">0</span>점</span>
+                <span id="opp-go-txt" class="go-txt"></span>
+            </div>
+            <div class="hand-area"><div class="hand-row" id="opp-row-1"></div><div class="hand-row" id="opp-row-2"></div></div>
+            <div id="opp-captured" class="captured-zone"></div>
+        </div>
+
+        <div id="frame-2" class="frame">
+            <div id="field-area" style="width:100%; height:100%; position:absolute;"></div>
+            <div id="dummy-stack" onclick="handleDummyClick()">
+                <div class="card" style="background:url('back.png') center/cover; top:0; left:0;"></div>
+                <div class="card" style="background:url('back.png') center/cover; top:-5px; left:0; border:1px solid gold;"></div>
+            </div>
+            <div id="preview-card"></div>
+            <div id="effect-txt"></div>
+        </div>
+
+        <div id="frame-3" class="frame">
+            <div id="my-ui" class="glass-ui" onclick="toggleScore(this)">
+                <span id="my-name-ui">엘사</span>
+                <span class="score-txt"><span id="my-score">0</span>점</span>
+                <span id="my-go-txt" class="go-txt"></span>
+            </div>
+            <div class="hand-area elsa-hand"><div class="hand-row" id="my-row-1"></div><div class="hand-row" id="my-row-2"></div></div>
+            <div id="my-captured" class="captured-zone"></div>
+        </div>
+
+        <div id="start-overlay" class="overlay">
+            <h1 style="margin-bottom: 40px; font-size: 40px;">엘사네 수동 전원 고스톱</h1>
+            <input type="text" id="p-input" value="엘사" style="padding:15px; font-size:20px; text-align:center; border-radius:5px; margin-bottom:30px;">
+            <div style="display:flex; gap:30px;">
+                <div class="char-card-wrap" onclick="selectChar('sangchu', '상추')"><img src="s_1.png" width="130" height="180"><p>상추</p></div>
+                <div class="char-card-wrap" onclick="selectChar('ggam', '까미')"><img src="s_2.png" width="130" height="180"><p>까미</p></div>
+                <div class="char-card-wrap" onclick="selectChar('kimchi', '김치')"><img src="s_3.png" width="130" height="180"><p>김치</p></div>
+            </div>
+        </div>
+
+        <div id="rps-overlay" class="overlay" style="display:none;">
+            <h1 style="font-size: 40px;">가위 바위 보! 선을 정하세요!</h1>
+            <div style="display:flex; gap:50px; margin-top:30px;">
+                <div class="rps-btn" onclick="playRPS('✌️')">✌️</div>
+                <div class="rps-btn" onclick="playRPS('✊')">✊</div>
+                <div class="rps-btn" onclick="playRPS('🖐️')">🖐️</div>
+            </div>
+            <h2 id="rps-status" style="margin-top:40px; font-size: 30px; color:yellow; height: 40px;"></h2>
+        </div>
+
+        <div id="bomb-choice-overlay" class="overlay">
+            <h1 style="color:yellow; text-shadow:2px 2px 0 red;">💣 폭탄 후유증! 💣</h1>
+            <h2 style="margin-bottom:30px;">손패가 부족합니다.</h2>
+            <div style="display:flex;">
+                <button class="bomb-btn" onclick="resolveBombTurn(true)">1. 패 안 내고 뒤집기</button>
+                <button class="bomb-btn" style="background:#444; border-color:#aaa;" onclick="resolveBombTurn(false)">2. 그냥 패 내기</button>
+            </div>
+            <p style="margin-top:20px; font-size:18px; color:#ddd;">(남은 횟수: <span id="bomb-skip-count-ui">0</span>회)</p>
+        </div>
+
+        <div id="gostop-overlay" class="overlay">
+            <h1 id="gostop-title" style="color:yellow; font-size:60px; margin-bottom:50px;">5점 났습니다!</h1>
+            <div style="display:flex; gap:60px;">
+                <button class="gostop-btn btn-go" onclick="handleGoUser()">GO!</button>
+                <button class="gostop-btn btn-stop" onclick="handleStopUser()">STOP</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // [상수 및 변수]
+    const G=['1_1','3_1','8_1','11_1','12_1']; 
+    const Y=['2_1','4_1','5_1','6_1','7_1','8_2','10_1','12_2']; 
+    const T=['1_2','2_2','3_2','4_2','5_2','6_2','7_2','9_2','10_2','12_3']; 
+    const GODORI = ['2_1', '4_1', '8_2'];
+    const HONG = ['1_2', '2_2', '3_2'];
+    const CHO = ['4_2', '5_2', '7_2'];
+    const CHUNG = ['6_2', '9_2', '10_2'];
+    const SSANG_PI = ['9_1', '11_2', '12_4'];
+    const GRID = [{x:60,y:80}, {x:220,y:80}, {x:380,y:80}, {x:540,y:80},{x:60,y:260}, {x:540,y:260},{x:60,y:440}, {x:540,y:440},{x:60,y:580}, {x:220,y:580}, {x:380,y:580}, {x:540,y:580}];
+
+    let state = { 
+        deck:[], myH:[], oppH:[], field:[], myC:[], oppC:[], turn:'USER', phase:'HAND', selected:null, 
+        lastMonth:null, lastCapture:[], lastLaidCardId: null,
+        isSelecting: false, selectableIds: [], pendingSourceId: null, selectionTarget: null,
+        bombSkip: { USER: 0, OPP: 0 },
+        goCount: { USER: 0, OPP: 0 },
+        lastGoScore: { USER: 0, OPP: 0 },
+        shaked: { USER: false, OPP: false }
+    };
+
+    // [기능 함수]
+    function playSound(n) { const a=document.getElementById('snd-'+n); if(a){ a.currentTime=0; a.play().catch(()=>{}); } }
+    function showEffect(txt, isHuge=false) { const el=document.getElementById('effect-txt'); el.innerText=txt; el.style.color=isHuge?"#ff3333":"yellow"; el.style.opacity=1; el.style.transform="translate(-50%,-50%) scale(1.1)"; setTimeout(()=>{el.style.opacity=0; el.style.transform="translate(-50%,-50%) scale(1)";}, 1500); }
+    function toggleFullScreen() { if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(()=>{}); } else { if (document.exitFullscreen) document.exitFullscreen(); } }
+
+    function toggleScore(el) { el.classList.toggle('expanded'); }
+
+    function selectChar(id, name) { 
+        document.getElementById('opp-name-ui').innerText = name; 
+        document.getElementById('my-name-ui').innerText = document.getElementById('p-input').value; 
+        document.getElementById('start-overlay').style.display = 'none'; 
+        document.getElementById('rps-overlay').style.display = 'flex'; 
+    }
+
+    function playRPS(user) {
+        const hands = ['✌️','✊','🖐️']; const ai = hands[Math.floor(Math.random()*3)];
+        const status = document.getElementById('rps-status');
+        status.innerText = `나: ${user} vs 상대: ${ai}`;
+        setTimeout(() => {
+            if(user === ai) { status.innerText += " (비김! 다시!)"; return; }
+            const win = (user==='✌️'&&ai==='🖐️') || (user==='✊'&&ai==='✌️') || (user==='🖐️'&&ai==='✊');
+            state.turn = win ? 'USER' : 'OPP';
+            status.innerText = win ? "승리! 엘사가 선입니다." : "상대 승리! 선을 뺏겼습니다.";
+            setTimeout(() => { document.getElementById('rps-overlay').style.display='none'; document.getElementById('dummy-stack').style.display='block'; initGame(); }, 1200);
+        }, 600);
+    }
+
+    function initGame() {
+        let d=[]; for(let m=1;m<=12;m++) for(let i=1;i<=4;i++) d.push(`${m}_${i}`);
+        d.sort(()=>Math.random()-0.5);
+        state.myH=d.slice(0,10); state.oppH=d.slice(10,20); state.deck=d.slice(28); 
+        state.field=[]; state.myC=[]; state.oppC=[]; state.lastMonth=null; state.lastCapture=[]; 
+        state.bombSkip={USER:0, OPP:0};
+        state.goCount={USER:0, OPP:0}; state.lastGoScore={USER:0, OPP:0}; state.shaked={USER:false, OPP:false};
+        
+        document.getElementById('my-go-txt').innerText = ""; document.getElementById('opp-go-txt').innerText = "";
+
+        if(checkChongtong('myH') || checkChongtong('oppH')) {
+            showEffect("총통 발생! 재시작!", true); setTimeout(initGame, 2000); return;
+        }
+
+        const f8 = d.slice(20,28);
+        const mc = {}; f8.forEach(c => { const m = c.split('_')[0]; mc[m] = (mc[m]||0)+1; });
+        let gridIdx = 0; const processedMonths = new Set();
+        f8.forEach(c => {
+            const m = c.split('_')[0];
+            if(mc[m] === 3) {
+                if(processedMonths.has(m)) return;
+                const cardsOfThisMonth = f8.filter(x => x.split('_')[0] === m);
+                cardsOfThisMonth.forEach((cardId, i) => {
+                    const obj = { id:cardId, gridIdx: gridIdx, x: GRID[gridIdx].x, y: GRID[gridIdx].y + (i*28), rot: 0 };
+                    state.field.push(obj); setTimeout(() => createFieldCard(obj), gridIdx*150);
+                });
+                processedMonths.add(m); gridIdx++;
+            } else {
+                const obj = { id:c, gridIdx: gridIdx, x: GRID[gridIdx].x, y: GRID[gridIdx].y, rot: Math.random()*30-15 };
+                state.field.push(obj); setTimeout(() => createFieldCard(obj), gridIdx*150); gridIdx++;
+            }
+        });
+
+        renderAll(); playSound('shuffle'); checkTurnStart();
+    }
+
+    function checkChongtong(handProp) {
+        const counts = {}; state[handProp].forEach(c => { const m=c.split('_')[0]; counts[m]=(counts[m]||0)+1; });
+        return Object.values(counts).includes(4);
+    }
+
+    function calculateScore(who) {
+        const captured = (who === 'USER') ? state.myC : state.oppC;
+        let score = 0;
+        const g = captured.filter(id => G.includes(id));
+        const y = captured.filter(id => Y.includes(id));
+        const t = captured.filter(id => T.includes(id));
+        const p = captured.filter(id => !G.includes(id) && !Y.includes(id) && !T.includes(id));
+
+        if (g.length === 5) score += 15;
+        else if (g.length === 4) score += 4;
+        else if (g.length === 3) { score += g.includes('12_1') ? 2 : 3; }
+
+        if (y.length >= 5) score += (y.length - 4);
+        if (GODORI.every(id => y.includes(id))) score += 5;
+
+        if (t.length >= 5) score += (t.length - 4);
+        if (HONG.every(id => t.includes(id))) score += 3;
+        if (CHO.every(id => t.includes(id))) score += 3;
+        if (CHUNG.every(id => t.includes(id))) score += 3;
+
+        let piCount = 0;
+        p.forEach(id => piCount += SSANG_PI.includes(id) ? 2 : 1);
+        if (piCount >= 10) score += (piCount - 9);
+
+        return { score, piCount, gCount: g.length };
+    }
+
+    function getFinalScore(winner, loser) {
+        const winStats = calculateScore(winner);
+        const loseStats = calculateScore(loser);
+        let finalScore = winStats.score;
+
+        const go = state.goCount[winner];
+        if (go === 1) finalScore += 1;
+        else if (go === 2) finalScore += 2;
+        else if (go >= 3) finalScore *= Math.pow(2, go - 2);
+
+        if (state.shaked[winner]) finalScore *= 2;
+        if (state.goCount[loser] > 0) { showEffect("고박!! 독박 2배!", true); finalScore *= 2; }
+        if (winStats.piCount >= 10 && loseStats.piCount < 7) { showEffect("피박!!", true); finalScore *= 2; }
+        if (winStats.gCount >= 3 && loseStats.gCount === 0) { showEffect("광박!!", true); finalScore *= 2; }
+
+        return finalScore;
+    }
+
+    function checkWinCondition(who) {
+        const stats = calculateScore(who);
+        const currentScore = stats.score;
+        const previousScore = state.lastGoScore[who];
+
+        document.getElementById(who==='USER'?'my-score':'opp-score').innerText = currentScore;
+
+        if (currentScore >= 5 && currentScore > previousScore) {
+            if (who === 'USER') {
+                showGoStopOverlay(currentScore);
+            } else {
+                setTimeout(() => aiDecideGoStop(currentScore), 1000);
+            }
+        } else {
+            finishTurnReal(who);
+        }
+    }
+
+    function showGoStopOverlay(score) {
+        document.getElementById('gostop-title').innerText = `${score}점! 고? 스톱?`;
+        document.getElementById('gostop-overlay').style.display = 'flex';
+    }
+
+    function handleGoUser() { document.getElementById('gostop-overlay').style.display = 'none'; processGo('USER'); }
+    function handleStopUser() { document.getElementById('gostop-overlay').style.display = 'none'; processStop('USER'); }
+
+    function aiDecideGoStop(score) {
+        if (state.goCount.OPP < 3 && state.deck.length > 5 && Math.random() > 0.2) { processGo('OPP'); } 
+        else { processStop('OPP'); }
+    }
+
+    function processGo(who) {
+        state.goCount[who]++;
+        state.lastGoScore[who] = calculateScore(who).score;
+        playSound('go');
+        showEffect(`${state.goCount[who]} GO!`, true);
+        document.getElementById(who==='USER'?'my-go-txt':'opp-go-txt').innerText = `${state.goCount[who]}고`;
+        finishTurnReal(who);
+    }
+
+    function processStop(who) {
+        playSound('stop');
+        const loser = who==='USER' ? 'OPP' : 'USER';
+        const finalPoint = getFinalScore(who, loser);
+        showEffect(`스톱! 승리!`, true);
+        setTimeout(() => { alert(`${who==='USER'?'엘사':'상대방'} 승리! \n최종 점수: ${finalPoint}점`); location.reload(); }, 500);
+    }
+
+    function finishTurnReal(who) {
+        if (state.deck.length === 0 && state.myH.length === 0 && state.oppH.length === 0) {
+            alert("나가리! (점수 없음)"); location.reload(); return;
+        }
+        if(who==='USER') { state.turn = 'OPP'; checkTurnStart(); }
+        else { state.turn = 'USER'; checkTurnStart(); }
+        state.lastMonth = null; state.lastCapture = []; state.lastLaidCardId = null; 
+    }
+
+    function createFieldCard(obj) {
+        const el = document.createElement('div'); el.className='card'; el.id='f-'+obj.id; el.style.backgroundImage=`url('${obj.id}.png')`;
+        el.style.left = obj.x+'px'; el.style.top = obj.y+'px'; el.style.transform = `rotate(${obj.rot}deg)`;
+        el.onclick = () => { if(state.isSelecting && state.selectableIds.includes(obj.id)) finalizeSelection(obj.id); };
+        document.getElementById('field-area').appendChild(el);
+    }
+
+    function renderAll() { 
+        renderHand('my'); renderHand('opp'); renderCaptured('my'); renderCaptured('opp'); updateDummy(); updateFieldVisuals(); 
+        document.getElementById('my-score').innerText = calculateScore('USER').score;
+        document.getElementById('opp-score').innerText = calculateScore('OPP').score;
+    }
+
+    function updateFieldVisuals() {
+        const counts = {}; state.field.forEach(f => { const m = f.id.split('_')[0]; counts[m] = (counts[m] || 0) + 1; });
+        state.field.forEach(f => {
+            const el = document.getElementById('f-'+f.id);
+            if(el) {
+                if(state.isSelecting && state.selectableIds.includes(f.id)) { el.classList.add('selectable-target'); el.classList.remove('field-three-card-glow'); }
+                else { el.classList.remove('selectable-target'); if(counts[f.id.split('_')[0]] === 3) el.classList.add('field-three-card-glow'); else el.classList.remove('field-three-card-glow'); }
+            }
+        });
+    }
+
+    function renderHand(who) {
+        const list = who==='my'?state.myH:state.oppH;
+        const r1 = document.getElementById(who==='my'?'my-row-1':'opp-row-1'); const r2 = document.getElementById(who==='my'?'my-row-2':'opp-row-2');
+        r1.innerHTML=""; r2.innerHTML="";
+        const counts = {}; list.forEach(c => { const m=c.split('_')[0]; counts[m]=(counts[m]||0)+1; });
+        
+        list.forEach((id, i) => {
+            const el = document.createElement('div'); el.className='card hand-card'; el.style.backgroundImage= (who==='my') ? `url('${id}.png')` : `url('back.png')`;
+            el.style.left = (i%5)*42 + 'px'; 
+            const m = id.split('_')[0]; const isBombSet = counts[m] === 3;
+            if(who === 'my' && isBombSet) el.classList.add('bomb-candidate');
+            if(who==='my' && state.turn==='USER' && state.phase==='HAND' && !state.isSelecting) {
+                if(state.selected === id) el.classList.add('selected');
+                el.onclick = () => {
+                    if(isBombSet) {
+                        const fieldMatch = state.field.find(f => f.id.split('_')[0] === m);
+                        if(fieldMatch) { executeBomb(id, 'USER', list.filter(c => c.split('_')[0] === m), fieldMatch.id); return; } 
+                        else { 
+                            showEffect("흔들기! 2배!", true); playSound('wind'); state.shaked.USER = true; 
+                            el.classList.add('shake-anim');
+                            setTimeout(() => { state.myH.splice(state.myH.indexOf(id), 1); state.selected = null; processHandPlay(id, 'USER'); }, 600); return;
+                        }
+                    }
+                    if(state.selected === id) { state.myH.splice(state.myH.indexOf(id), 1); state.selected = null; processHandPlay(id, 'USER'); }
+                    else { state.selected = id; renderHand('my'); }
+                };
+            }
+            (i<5 ? r1 : r2).appendChild(el);
+        });
+    }
+
+    function executeBomb(clickedId, who, bombCards, fieldTargetId) {
+        showEffect("💣 폭탄!!! 💣", true); playSound('bomb');
+        const handArr = who === 'USER' ? state.myH : state.oppH;
+        bombCards.forEach(c => { const idx = handArr.indexOf(c); if(idx > -1) handArr.splice(idx, 1); });
+        const fIdx = state.field.findIndex(x => x.id === fieldTargetId);
+        if(fIdx !== -1) { state.field.splice(fIdx, 1); const el=document.getElementById('f-'+fieldTargetId); if(el) el.remove(); }
+        const all = [...bombCards, fieldTargetId];
+        (who==='USER' ? state.myC : state.oppC).push(...all);
+        state.lastCapture = all; 
+        stealPi(who);
+        state.bombSkip[who] = 2; state.shaked[who] = true; 
+        state.phase = 'DUMMY';
+        renderAll();
+    }
+
+    function checkTurnStart() {
+        if(state.turn === 'USER') {
+            if(state.bombSkip.USER > 0 && state.myH.length > 0) {
+                document.getElementById('bomb-skip-count-ui').innerText = state.bombSkip.USER;
+                document.getElementById('bomb-choice-overlay').style.display = 'flex';
+            } else {
+                state.phase = (state.myH.length > 0) ? 'HAND' : 'DUMMY';
+                renderAll();
+                if(state.myH.length === 0 && state.deck.length > 0) showEffect("패 없음: 더미 뒤집기");
+            }
+        } else { setTimeout(playOpponent, 2000); }
+    }
+
+    function resolveBombTurn(skipHand) {
+        document.getElementById('bomb-choice-overlay').style.display = 'none';
+        if(skipHand) { state.bombSkip.USER--; showEffect("패 안 내고 뒤집기"); state.phase = 'DUMMY'; renderAll(); } 
+        else { state.phase = 'HAND'; renderAll(); }
+    }
+
+    function processHandPlay(id, who) {
+        const m = id.split('_')[0];
+        const matches = state.field.filter(f => f.id.split('_')[0] === m);
+        state.lastMonth = m; state.lastCapture = []; state.lastLaidCardId = null;
+
+        if(matches.length === 3) {
+            showEffect("뻑 먹었다!!!", false); captureCards(who, [id, ...matches.map(f => f.id)]); stealPi(who); state.phase = 'DUMMY'; renderAll();
+        } else if(matches.length === 2 && who === 'USER') {
+            state.isSelecting = true; state.selectableIds = matches.map(f => f.id); state.pendingSourceId = id; state.selectionTarget = 'HAND'; showEffect("가져갈 패를 선택하세요"); renderAll();
+        } else if(matches.length > 0) {
+            const fCard = matches[0]; 
+            (who==='USER' ? state.myC : state.oppC).push(id, fCard.id); state.lastCapture = [id, fCard.id];
+            state.field.splice(state.field.findIndex(x => x.id === fCard.id), 1);
+            const el = document.getElementById('f-'+fCard.id); if(el) el.remove();
+            playSound('chak'); state.phase = 'DUMMY'; renderAll();
+        } else {
+            const emptyIdx = findEmptyGrid();
+            const obj = { id:id, gridIdx: emptyIdx, x: GRID[emptyIdx].x, y: GRID[emptyIdx].y, rot:Math.random()*30-15 };
+            state.field.push(obj); createFieldCard(obj);
+            state.lastLaidCardId = id; state.lastMonth = null;
+            playSound('tak'); state.phase = 'DUMMY'; renderAll();
+        }
+    }
+
+    function finalizeSelection(fieldCardId) {
+        const who = 'USER'; const handId = state.pendingSourceId;
+        state.myC.push(handId, fieldCardId); state.lastCapture = [handId, fieldCardId];
+        state.field.splice(state.field.findIndex(x => x.id === fieldCardId), 1);
+        const el = document.getElementById('f-'+fieldCardId); if(el) el.remove();
+        state.isSelecting = false; state.selectableIds = []; state.pendingSourceId = null;
+        playSound('chak');
+        if(state.selectionTarget === 'HAND') state.phase = 'DUMMY';
+        else if(state.selectionTarget === 'DUMMY') checkSweepAndFinish(who);
+        state.selectionTarget = null; renderAll();
+    }
+
+    function findEmptyGrid() { const occupied = state.field.map(f => f.gridIdx); for(let i=0; i<GRID.length; i++) { if(!occupied.includes(i)) return i; } return Math.floor(Math.random()*GRID.length); }
+    function handleDummyClick() { if(state.turn !== 'USER' || state.phase !== 'DUMMY' || state.isSelecting) return; flipDummy('USER'); }
+
+    function flipDummy(who) {
+        const drawn = state.deck.pop();
+        if(!drawn) { finishTurnReal(who); return; }
+        
+        const pb = document.getElementById('preview-card'); pb.style.backgroundImage=`url('${drawn}.png')`; pb.style.transform="translate(-50%, -50%) scale(1.5)";
+        setTimeout(() => {
+            pb.style.transform="translate(-50%, -50%) scale(0)";
+            const dm = drawn.split('_')[0];
+            const isLastTurn = (who === 'USER' ? state.myH.length : state.oppH.length) === 0;
+
+            if(state.lastLaidCardId && dm === state.lastLaidCardId.split('_')[0]) {
+                if(isLastTurn) {
+                    captureCards(who, [drawn, state.lastLaidCardId]); playSound('chak'); checkSweepAndFinish(who);
+                } else {
+                    showEffect("쪽이야~ 💋", false); playSound('jjok'); captureCards(who, [drawn, state.lastLaidCardId]); stealPi(who); checkSweepAndFinish(who);
+                }
+            } else if(state.lastMonth && dm === state.lastMonth && state.lastCapture.length > 0) {
+                showEffect("쌌다!!!", true); playSound('fail');
+                const targetC = (who==='USER' ? state.myC : state.oppC);
+                const c1 = state.lastCapture[0], c2 = state.lastCapture[1];
+                targetC.splice(targetC.indexOf(c1), 1); targetC.splice(targetC.indexOf(c2), 1);
+                const gridIdx = findEmptyGrid(); const baseX = GRID[gridIdx].x, baseY = GRID[gridIdx].y;
+                [c1, c2, drawn].forEach((id, i) => { const obj = { id:id, gridIdx: gridIdx, x: baseX, y: baseY + (i*28), rot: 0 }; state.field.push(obj); createFieldCard(obj); });
+                checkSweepAndFinish(who);
+            } else { processDummyPlay(drawn, who); }
+        }, 1000);
+    }
+
+    function processDummyPlay(id, who) {
+        const m = id.split('_')[0]; const matches = state.field.filter(f => f.id.split('_')[0] === m);
+        if(matches.length === 3) {
+            showEffect("뻑 먹었다!!!", false); captureCards(who, [id, ...matches.map(f => f.id)]); stealPi(who); checkSweepAndFinish(who);
+        } else if(matches.length === 2 && who === 'USER') {
+            state.isSelecting = true; state.selectableIds = matches.map(f => f.id); state.pendingSourceId = id; state.selectionTarget = 'DUMMY'; showEffect("더미 패: 가져갈 패를 선택하세요"); renderAll();
+        } else if(matches.length > 0) {
+            captureCards(who, [id, matches[0].id]); playSound('chak'); checkSweepAndFinish(who);
+        } else {
+            const idx = findEmptyGrid(); const obj = { id:id, gridIdx: idx, x: GRID[idx].x, y: GRID[idx].y, rot:Math.random()*30-15 };
+            state.field.push(obj); createFieldCard(obj); playSound('tak'); checkSweepAndFinish(who);
+        }
+    }
+
+    function checkSweepAndFinish(who) {
+        if (state.field.length === 0 && state.deck.length > 0) {
+            showEffect("싹쓸이~ 🧹", true); playSound('wind'); stealPi(who); 
+        }
+        checkWinCondition(who);
+    }
+    
+    function captureCards(who, ids) { ids.forEach(id => { const fIdx = state.field.findIndex(x => x.id === id); if(fIdx !== -1) { state.field.splice(fIdx, 1); const el = document.getElementById('f-'+id); if(el) el.remove(); } (who==='USER' ? state.myC : state.oppC).push(id); }); playSound('get'); renderCaptured(who); }
+    
+    function stealPi(winner) {
+        const target = winner === 'USER' ? state.oppC : state.myC;
+        const dest = winner === 'USER' ? state.myC : state.oppC;
+        const piIdx = target.findIndex(id => !G.includes(id) && !Y.includes(id) && !T.includes(id));
+        if(piIdx !== -1) {
+            const stolenId = target.splice(piIdx, 1)[0];
+            const animCard = document.createElement('div'); animCard.className = 'card stolen-pi-anim';
+            animCard.style.backgroundImage = `url('${stolenId}.png')`; animCard.style.left = '50%'; animCard.style.top = '50%'; animCard.style.transform = 'translate(-50%, -50%) scale(0)';
+            document.body.appendChild(animCard);
+            setTimeout(() => {
+                animCard.style.transform = 'translate(-50%, -50%) scale(2)'; playSound('get');
+                setTimeout(() => {
+                    const rect = document.getElementById(winner==='USER'?'my-captured':'opp-captured').getBoundingClientRect();
+                    animCard.style.left = rect.left + 'px'; animCard.style.top = rect.top + 'px'; animCard.style.transform = 'scale(0.5)'; animCard.style.opacity = '0';
+                    setTimeout(() => { dest.push(stolenId); animCard.remove(); renderCaptured(winner==='USER'?'my':'opp'); }, 800);
+                }, 1000); 
+            }, 100);
+        }
+    }
+
+    function playOpponent() {
+        if(state.turn !== 'OPP') return;
+        if(state.bombSkip.OPP > 0 && state.oppH.length > 0) { state.bombSkip.OPP--; showEffect("상대: 패 안 내고 뒤집기"); setTimeout(() => flipDummy('OPP'), 1000); return; }
+        if(state.oppH.length === 0) { setTimeout(() => flipDummy('OPP'), 1000); return; }
+
+        const counts = {}; state.oppH.forEach(c => counts[c.split('_')[0]] = (counts[c.split('_')[0]]||0)+1);
+        let bombTarget = null;
+        for(let m in counts) {
+            if(counts[m] === 3) {
+                const fieldMatch = state.field.find(f => f.id.split('_')[0] === m);
+                if(fieldMatch) { bombTarget = { m: m, fieldId: fieldMatch.id }; break; }
+            }
+        }
+
+        if(bombTarget) {
+            const bombCards = state.oppH.filter(c => c.split('_')[0] === bombTarget.m);
+            const id = bombCards[0];
+            const preview = document.createElement('div'); preview.className = 'card'; 
+            preview.style.cssText = `left:150px; top:120px; border:3px solid gold; z-index:6000; background-image:url('${id}.png'); transform:scale(1.3); position:absolute;`;
+            document.getElementById('frame-1').appendChild(preview);
+            setTimeout(() => { preview.remove(); executeBomb(id, 'OPP', bombCards, bombTarget.fieldId); setTimeout(()=>flipDummy('OPP'), 1000); }, 2000);
+        } else {
+            const id = state.oppH[0];
+            const preview = document.createElement('div'); preview.className = 'card'; 
+            preview.style.cssText = `left:150px; top:120px; border:3px solid red; z-index:6000; background-image:url('${id}.png'); transform:scale(1.3); position:absolute;`;
+            document.getElementById('frame-1').appendChild(preview);
+            setTimeout(() => { preview.remove(); state.oppH.shift(); processHandPlay(id, 'OPP'); if(!state.isSelecting) setTimeout(()=>flipDummy('OPP'), 1000); }, 2000);
+        }
+    }
+
+    function renderCaptured(who) {
+        const id_pfx = (who==='my'||who==='USER') ? 'my' : 'opp';
+        const area = document.getElementById(id_pfx+'-captured'); area.innerHTML="";
+        const list = (who==='my'||who==='USER') ? state.myC : state.oppC;
+        let grps = {g:[], y:[], t:[], p:[]};
+        list.forEach(id => { if(G.includes(id)) grps.g.push(id); else if(Y.includes(id)) grps.y.push(id); else if(T.includes(id)) grps.t.push(id); else grps.p.push(id); });
+        [grps.g, grps.y, grps.t, grps.p].forEach(grp => {
+            if(grp.length === 0) return;
+            const row = document.createElement('div'); row.className='captured-row';
+            grp.forEach((id, i) => { 
+                const c = document.createElement('div'); 
+                c.className='captured-card' + (i===0?' start-group':''); 
+                c.style.backgroundImage=`url('${id}.png')`; 
+                row.appendChild(c); 
+            });
+            area.appendChild(row);
+        });
+    }
+
+    function updateDummy() { const d = document.getElementById('dummy-stack'); if(state.turn==='USER' && state.phase==='DUMMY' && !state.isSelecting) d.classList.add('dummy-glow'); else d.classList.remove('dummy-glow'); d.style.display = state.deck.length > 0 ? 'block' : 'none'; }
+    function resizeGame() { const s = Math.min(window.innerWidth/1500, window.innerHeight/720); document.getElementById('game-container').style.transform=`scale(${s})`; }
+    window.onresize = resizeGame; window.onload = resizeGame;
+</script>
+</body>
+</html>
