@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>엘사네 수동 전원 고스톱 (블러핑 AI 추가)</title>
+    <title>엘사네 수동 전원 고스톱 (블러핑 조절 & 눈치 추가)</title>
     <style>
         /* [1. 기본 설정 및 레이아웃 수정] */
         html, body {
@@ -399,16 +399,25 @@
     function handleGoUser() { document.getElementById('gostop-overlay').style.display = 'none'; processGo('USER'); }
     function handleStopUser() { document.getElementById('gostop-overlay').style.display = 'none'; processStop('USER'); }
 
-    // [AI 블러핑 로직 추가]
+    // [AI 블러핑 조절 및 상대방(엘사님) 점수 눈치 보기 로직 추가]
     function aiDecideGoStop(score) {
-        // 덱이 4장 이하로 위험하거나 이미 고를 불렀음에도 50% 확률로 뻔뻔하게 고를 부름
-        const isBluffing = (state.deck.length <= 4 || state.goCount.OPP >= 1) && (Math.random() < 0.5);
+        // 엘사님의 현재 점수를 계산
+        const userCurrentScore = calculateScore('USER').score;
+        
+        // 엘사님의 점수가 4점 이상이라 곧 5점이 될 것 같으면, AI가 고박을 피하기 위해 무조건 스톱
+        if (userCurrentScore >= 4) {
+            setTimeout(() => processStop('OPP'), 1000);
+            return;
+        }
 
-        if (state.goCount.OPP < 4) { // 최대 3고까지만
+        // 엘사님 점수가 낮을 때만 블러핑 시전 (확률도 50%에서 30%로 낮춰서 남용 방지)
+        const isBluffing = (state.deck.length <= 4 || state.goCount.OPP >= 1) && (Math.random() < 0.3);
+
+        if (state.goCount.OPP < 3) { // 3고까지만
             if (isBluffing) {
                 showEffect("못 먹어도 GO!! 😜", true);
-                setTimeout(() => processGo('OPP'), 1500); // 1.5초 후 진짜 고 처리
-            } else if (state.deck.length > 3 && Math.random() > 0.2) {
+                setTimeout(() => processGo('OPP'), 1500); 
+            } else if (state.deck.length > 4 && Math.random() > 0.2) {
                 processGo('OPP'); 
             } else {
                 processStop('OPP'); 
